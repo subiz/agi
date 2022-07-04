@@ -251,9 +251,9 @@ func (a *AGI) Command(cmd ...string) (resp *Response) {
 			break
 		}
 
+		// ignore hangup signal, we dont handle it here
 		if strings.HasPrefix(raw, "HANGUP") {
-			resp.Error = ErrHangup
-			return
+			continue
 		}
 
 		// Parse and store the result code

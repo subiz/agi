@@ -1,6 +1,6 @@
 # Asterisk AGI library for Go (golang)
 
-[![Build Status](https://travis-ci.org/CyCoreSystems/agi.png)](https://travis-ci.org/CyCoreSystems/agi) [![](https://godoc.org/github.com/CyCoreSystems/agi?status.svg)](http://godoc.org/github.com/CyCoreSystems/agi)
+[![Build Status](https://travis-ci.org/subiz/agi.png)](https://travis-ci.org/subiz/agi) [![](https://godoc.org/github.com/subiz/agi?status.svg)](http://godoc.org/github.com/subiz/agi)
 
 This is an Asterisk AGI interface library which may be used for both classical
 AGI, with a standalone executable, or FastAGI, with a TCP server.
@@ -8,7 +8,7 @@ AGI, with a standalone executable, or FastAGI, with a TCP server.
 ```go
 package main
 
-import "github.com/CyCoreSystems/agi"
+import "github.com/subiz/agi"
 
 func main() {
    a := agi.NewStdio()
@@ -32,7 +32,7 @@ For a TCP server, register a HandlerFunc to a TCP port:
 ```go
 package main
 
-import "github.com/CyCoreSystems/agi"
+import "github.com/subiz/agi"
 
 func main() {
    agi.Listen(":8080", handler)
@@ -49,4 +49,3 @@ func handler(a *agi.AGI) {
    a.Hangup()
 }
 ```
-

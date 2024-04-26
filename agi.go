@@ -2,6 +2,7 @@ package agi
 
 import (
 	"bufio"
+	"errors"
 	"fmt"
 	"io"
 	"log"
@@ -12,8 +13,6 @@ import (
 	"strings"
 	"sync"
 	"time"
-
-	"errors"
 )
 
 // State describes the Asterisk channel state.  There are mapped
@@ -329,9 +328,9 @@ func (a *AGI) Status() (State, error) {
 }
 
 // Exec runs a dialplan application
-func (a *AGI) Exec(cmd ...string) (string, error) {
+func (a *AGI) Exec(timeout time.Duration, cmd ...string) (string, error) {
 	cmd = append([]string{"EXEC"}, cmd...)
-	return a.Command(0, cmd...).Val()
+	return a.Command(timeout, cmd...).Val()
 }
 
 // Get gets the value of the given channel variable
@@ -496,7 +495,7 @@ func (a *AGI) StreamFile(name string, escapeDigits string, offset int) (digit st
 	if escapeDigits == "" {
 		escapeDigits = `""`
 	}
-	return a.Command(0, "STREAM FILE", name, escapeDigits, strconv.Itoa(offset)).Val()
+	return a.Command(60*time.Second, "STREAM FILE", name, escapeDigits, strconv.Itoa(offset)).Val()
 }
 
 // Verbose logs the given message to the verbose message system

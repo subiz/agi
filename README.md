@@ -1,4 +1,5 @@
 # Asterisk AGI library for Go (golang)
+Based on https://github.com/CyCoreSystems/agi
 
 [![Build Status](https://travis-ci.org/subiz/agi.png)](https://travis-ci.org/subiz/agi) [![](https://godoc.org/github.com/subiz/agi?status.svg)](http://godoc.org/github.com/subiz/agi)
 

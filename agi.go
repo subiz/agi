@@ -13,7 +13,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/pkg/errors"
+	"errors"
 )
 
 // State describes the Asterisk channel state.  There are mapped
@@ -82,8 +82,8 @@ type Response struct {
 }
 
 // Res returns the ResultString of a Response, as well as any error encountered.  Depending on the command, this is sometimes more useful than Val()
-func (r *Response) Res() (string,error) {
-  return r.ResultString, r.Error
+func (r *Response) Res() (string, error) {
+	return r.ResultString, r.Error
 }
 
 // Err returns the error value from the response
@@ -178,14 +178,14 @@ func Listen(addr string, handler HandlerFunc) error {
 
 	l, err := net.Listen("tcp", addr)
 	if err != nil {
-		return errors.Wrap(err, "failed to bind server")
+		return errors.New("failed to bind server: " + err.Error())
 	}
 	defer l.Close() // nolint: errcheck
 
 	for {
 		conn, err := l.Accept()
 		if err != nil {
-			return errors.Wrap(err, "failed to accept TCP connection")
+			return errors.New("failed to accept TCP connection: " + err.Error())
 		}
 
 		go handler(NewConn(conn))
@@ -209,7 +209,7 @@ func (a *AGI) EAGI() io.Reader {
 // Command sends the given command line to stdout
 // and returns the response.
 // TODO: this does not handle multi-line responses properly
-func (a *AGI) Command(cmd ...string) (resp *Response) {
+func (a *AGI) Command(timeout time.Duration, cmd ...string) (resp *Response) {
 	resp = &Response{}
 	cmdString := strings.Join(cmd, " ")
 	var raw string
@@ -240,49 +240,67 @@ func (a *AGI) Command(cmd ...string) (resp *Response) {
 
 	_, err := a.w.Write([]byte(cmdString + "\n"))
 	if err != nil {
-		resp.Error = errors.Wrap(err, "failed to send command")
+		resp.Error = errors.New("failed to send command: " + err.Error())
 		return
 	}
 
-	s := bufio.NewScanner(a.r)
-	for s.Scan() {
-		raw = s.Text()
-		if raw == "" {
-			break
-		}
+	waitC := make(chan string, 1)
+	go func() {
+		defer func() {
+			waitC <- "ok"
+		}()
 
-		// ignore hangup signal, we dont handle it here
-		if strings.HasPrefix(raw, "HANGUP") {
-			continue
-		}
+		s := bufio.NewScanner(a.r)
+		for s.Scan() {
+			raw = s.Text()
+			if raw == "" {
+				break
+			}
 
-		// Parse and store the result code
-		pieces := responseRegex.FindStringSubmatch(raw)
-		if pieces == nil {
-			resp.Error = fmt.Errorf("failed to parse result: %s", raw)
+			// ignore hangup signal, we dont handle it here
+			if strings.HasPrefix(raw, "HANGUP") {
+				continue
+			}
+
+			// Parse and store the result code
+			pieces := responseRegex.FindStringSubmatch(raw)
+			if pieces == nil {
+				resp.Error = fmt.Errorf("failed to parse result: %s", raw)
+				break
+			}
+
+			// Status code is the first substring
+			resp.Status, err = strconv.Atoi(pieces[1])
+			if err != nil {
+				resp.Error = errors.New("failed to get status code: " + err.Error())
+				break
+			}
+
+			// Result code is the second substring
+			resp.ResultString = pieces[2]
+			resp.Result, err = strconv.Atoi(pieces[2])
+			if err != nil {
+				resp.Error = errors.New("failed to parse result-code as an integer: " + err.Error())
+			}
+
+			// Value is the third (and optional) substring
+			wrappedVal := strings.TrimSpace(pieces[3])
+			resp.Value = strings.TrimSuffix(strings.TrimPrefix(wrappedVal, "("), ")")
+
+			// FIXME: handle multiple line return values
+			break // nolint
+		}
+	}()
+
+	if timeout > 0 {
+		select {
+		case <-waitC:
+		case <-time.After(timeout):
+			resp.Error = fmt.Errorf("timeout")
 			return
 		}
-
-		// Status code is the first substring
-		resp.Status, err = strconv.Atoi(pieces[1])
-		if err != nil {
-			resp.Error = errors.Wrap(err, "failed to get status code")
-			return
-		}
-
-		// Result code is the second substring
-		resp.ResultString = pieces[2]
-		resp.Result, err = strconv.Atoi(pieces[2])
-		if err != nil {
-			resp.Error = errors.Wrap(err, "failed to parse result-code as an integer")
-		}
-
-		// Value is the third (and optional) substring
-		wrappedVal := strings.TrimSpace(pieces[3])
-		resp.Value = strings.TrimSuffix(strings.TrimPrefix(wrappedVal, "("), ")")
-
-		// FIXME: handle multiple line return values
-		break // nolint
+	} else {
+		<-waitC
 	}
 
 	// If the Status code is not 200, return an error
@@ -294,12 +312,12 @@ func (a *AGI) Command(cmd ...string) (resp *Response) {
 
 // Answer answers the channel
 func (a *AGI) Answer() error {
-	return a.Command("ANSWER").Err()
+	return a.Command(30*time.Second, "ANSWER").Err()
 }
 
 // Status returns the channel status
 func (a *AGI) Status() (State, error) {
-	r, err := a.Command("CHANNEL STATUS").Val()
+	r, err := a.Command(5*time.Second, "CHANNEL STATUS").Val()
 	if err != nil {
 		return StateDown, err
 	}
@@ -313,12 +331,12 @@ func (a *AGI) Status() (State, error) {
 // Exec runs a dialplan application
 func (a *AGI) Exec(cmd ...string) (string, error) {
 	cmd = append([]string{"EXEC"}, cmd...)
-	return a.Command(cmd...).Val()
+	return a.Command(0, cmd...).Val()
 }
 
 // Get gets the value of the given channel variable
 func (a *AGI) Get(key string) (string, error) {
-	return a.Command("GET VARIABLE", key).Val()
+	return a.Command(5*time.Second, "GET VARIABLE", key).Val()
 }
 
 // GetData plays a file and receives DTMF, returning the received digits
@@ -326,13 +344,13 @@ func (a *AGI) GetData(sound string, timeout time.Duration, maxdigits int) (digit
 	if sound == "" {
 		sound = "silence/1"
 	}
-	resp := a.Command("GET DATA", sound, toMSec(timeout), strconv.Itoa(maxdigits))
+	resp := a.Command(0, "GET DATA", sound, toMSec(timeout), strconv.Itoa(maxdigits))
 	return resp.Res()
 }
 
 // Hangup terminates the call
 func (a *AGI) Hangup() error {
-	return a.Command("HANGUP").Err()
+	return a.Command(1*time.Second, "HANGUP").Err()
 }
 
 // RecordOptions describes the options available when recording
@@ -391,7 +409,7 @@ func (a *AGI) Record(name string, opts *RecordOptions) error {
 		cmd += " s=" + toSec(opts.Silence)
 	}
 
-	return a.Command(cmd).Err()
+	return a.Command(0, cmd).Err()
 }
 
 // SayAlpha plays a character string, annunciating each character.
@@ -400,7 +418,7 @@ func (a *AGI) SayAlpha(label string, escapeDigits string) (digit string, err err
 	if escapeDigits == "" {
 		escapeDigits = `""`
 	}
-	return a.Command("SAY ALPHA", label, escapeDigits).Val()
+	return a.Command(0, "SAY ALPHA", label, escapeDigits).Val()
 }
 
 // SayDigits plays a digit string, annunciating each digit.
@@ -409,7 +427,7 @@ func (a *AGI) SayDigits(number string, escapeDigits string) (digit string, err e
 	if escapeDigits == "" {
 		escapeDigits = `""`
 	}
-	return a.Command("SAY DIGITS", number, escapeDigits).Val()
+	return a.Command(0, "SAY DIGITS", number, escapeDigits).Val()
 }
 
 // SayDate plays a date
@@ -418,7 +436,7 @@ func (a *AGI) SayDate(when time.Time, escapeDigits string) (digit string, err er
 	if escapeDigits == "" {
 		escapeDigits = `""`
 	}
-	return a.Command("SAY DATE", toEpoch(when), escapeDigits).Val()
+	return a.Command(0, "SAY DATE", toEpoch(when), escapeDigits).Val()
 }
 
 // SayDateTime plays a date using the given format.  See `voicemail.conf` for the format syntax; defaults to `ABdY 'digits/at' IMp`.
@@ -436,7 +454,7 @@ func (a *AGI) SayDateTime(when time.Time, escapeDigits string, format string) (d
 		format = "ABdY 'digits/at' IMp"
 	}
 
-	return a.Command("SAY DATETIME", toEpoch(when), escapeDigits, format, zone).Val()
+	return a.Command(0, "SAY DATETIME", toEpoch(when), escapeDigits, format, zone).Val()
 }
 
 // SayNumber plays the given number.
@@ -445,7 +463,7 @@ func (a *AGI) SayNumber(number string, escapeDigits string) (digit string, err e
 	if escapeDigits == "" {
 		escapeDigits = `""`
 	}
-	return a.Command("SAY NUMBER", number, escapeDigits).Val()
+	return a.Command(0, "SAY NUMBER", number, escapeDigits).Val()
 }
 
 // SayPhonetic plays the given phrase phonetically
@@ -454,7 +472,7 @@ func (a *AGI) SayPhonetic(phrase string, escapeDigits string) (digit string, err
 	if escapeDigits == "" {
 		escapeDigits = `""`
 	}
-	return a.Command("SAY PHOENTIC", phrase, escapeDigits).Val()
+	return a.Command(0, "SAY PHOENTIC", phrase, escapeDigits).Val()
 }
 
 // SayTime plays the time part of the given timestamp
@@ -463,13 +481,13 @@ func (a *AGI) SayTime(when time.Time, escapeDigits string) (digit string, err er
 	if escapeDigits == "" {
 		escapeDigits = `""`
 	}
-	return a.Command("SAY TIME", toEpoch(when), escapeDigits).Val()
+	return a.Command(0, "SAY TIME", toEpoch(when), escapeDigits).Val()
 }
 
 // Set sets the given channel variable to
 // the provided value.
 func (a *AGI) Set(key, val string) error {
-	return a.Command("SET VARIABLE", key, val).Err()
+	return a.Command(5*time.Second, "SET VARIABLE", key, val).Err()
 }
 
 // StreamFile plays the given file to the channel
@@ -478,12 +496,12 @@ func (a *AGI) StreamFile(name string, escapeDigits string, offset int) (digit st
 	if escapeDigits == "" {
 		escapeDigits = `""`
 	}
-	return a.Command("STREAM FILE", name, escapeDigits, strconv.Itoa(offset)).Val()
+	return a.Command(0, "STREAM FILE", name, escapeDigits, strconv.Itoa(offset)).Val()
 }
 
 // Verbose logs the given message to the verbose message system
 func (a *AGI) Verbose(msg string, level int) error {
-	return a.Command("VERBOSE", strconv.Quote(msg), strconv.Itoa(level)).Err()
+	return a.Command(0, "VERBOSE", strconv.Quote(msg), strconv.Itoa(level)).Err()
 }
 
 // Verbosef logs the formatted verbose output
@@ -493,7 +511,7 @@ func (a *AGI) Verbosef(format string, args ...interface{}) error {
 
 // WaitForDigit waits for a DTMF digit and returns what is received
 func (a *AGI) WaitForDigit(timeout time.Duration) (digit string, err error) {
-	resp := a.Command("WAIT FOR DIGIT", toMSec(timeout))
+	resp := a.Command(0, "WAIT FOR DIGIT", toMSec(timeout))
 	resp.ResultString = ""
 	if resp.Error == nil && strconv.IsPrint(rune(resp.Result)) {
 		resp.ResultString = string(resp.Result)

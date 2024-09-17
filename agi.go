@@ -246,7 +246,7 @@ func (a *AGI) Command(timeout time.Duration, cmd ...string) (resp *Response) {
 			// Status code is the first substring
 			resp.Status, err = strconv.Atoi(pieces[1])
 			if err != nil {
-				resp.Error = errors.New("failed to get status code: " + err.Error())
+				resp.Error = errors.New("failed to get status code: " + err.Error() + ", raw: " + raw)
 				break
 			}
 
@@ -254,7 +254,7 @@ func (a *AGI) Command(timeout time.Duration, cmd ...string) (resp *Response) {
 			resp.ResultString = pieces[2]
 			resp.Result, err = strconv.Atoi(pieces[2])
 			if err != nil {
-				resp.Error = errors.New("failed to parse result-code as an integer: " + err.Error())
+				resp.Error = errors.New("failed to parse result-code as an integer: " + err.Error() + ", raw: " + raw)
 			}
 
 			// Value is the third (and optional) substring
@@ -278,8 +278,8 @@ func (a *AGI) Command(timeout time.Duration, cmd ...string) (resp *Response) {
 	}
 
 	// If the Status code is not 200, return an error
-	if resp.Status != 200 {
-		resp.Error = fmt.Errorf("Non-200 status code")
+	if resp.Status != StatusOK && resp.Error == nil {
+		resp.Error = fmt.Errorf("Non-200 status code. " + raw)
 	}
 	return
 }
@@ -297,7 +297,7 @@ func (a *AGI) Status() (State, error) {
 	}
 	state, err := strconv.Atoi(r)
 	if err != nil {
-		return StateDown, fmt.Errorf("Failed to parse state %s", r)
+		return StateDown, fmt.Errorf("failed to parse state %s", r)
 	}
 	return State(state), nil
 }

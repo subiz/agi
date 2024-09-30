@@ -187,6 +187,13 @@ func Listen(addr string, handler HandlerFunc) error {
 	}
 }
 
+func (a *AGI) IsClosed() bool {
+	if a == nil {
+		return true
+	}
+	return a.conn == nil
+}
+
 // Close closes any network connection associated with the AGI instance
 func (a *AGI) Close() (err error) {
 	if a.conn != nil {

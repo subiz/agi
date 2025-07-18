@@ -298,7 +298,7 @@ func (a *AGI) Answer() error {
 
 // Status returns the channel status
 func (a *AGI) Status() (State, error) {
-	r, err := a.Command(5*time.Second, "CHANNEL STATUS").Val()
+	r, err := a.Command(5*time.Second, "CHANNEL STATUS").Res()
 	if err != nil {
 		return StateDown, err
 	}
@@ -495,7 +495,7 @@ func (a *AGI) WaitForDigit(timeout time.Duration) (digit string, err error) {
 	resp := a.Command(0, "WAIT FOR DIGIT", toMSec(timeout))
 	resp.ResultString = ""
 	if resp.Error == nil && strconv.IsPrint(rune(resp.Result)) {
-		resp.ResultString = string(resp.Result)
+		resp.ResultString = string(rune(resp.Result))
 	}
 	return resp.Res()
 }
